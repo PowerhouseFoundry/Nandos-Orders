@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Order Screen</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Helvetica, Arial, sans-serif;
+      background: #f1f1f1;
+      display: flex;
+      flex-direction: column;
+    }
+    .toolbar {
+      background: #252525;
+      color: #fff;
+      padding: 12px 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .toolbar-title { font-size: 18px; font-weight: bold; }
+    .level-picker { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: bold; }
+    .level-picker select {
+      font: inherit;
+      background: #fff;
+      color: #222;
+      border: 2px solid #fff;
+      border-radius: 5px;
+      padding: 9px 12px;
+      min-height: 44px;
+      max-width: 100%;
+    }
+    .columns { display: flex; flex: 1; width: 100%; }
+    .column {
+      flex: 1;
+      min-width: 0;
+      background: #f1f1f1;
+      border-left: 1px solid #ddd;
+      position: relative;
+      overflow: hidden;
+    }
+    .column:first-child { border-left: 0; }
+    .order {
+      margin: 10px;
+      background: #fcfcf7;
+      display: flex;
+      flex-direction: column;
+      min-height: 160px;
+      position: relative;
+      cursor: pointer;
+      user-select: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    }
+    .order:focus-visible { outline: 4px solid #202020; outline-offset: 2px; }
+    .status-band {
+      min-height: 80px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-weight: bold;
+      transition: background-color .3s;
+    }
+    .status-band.green { background: green; }
+    .status-band.orange { background: orange; }
+    .status-band.red { background: red; }
+    .status-band.flashing { animation: flash 1s infinite; }
+    @keyframes flash {
+      0%, 100% { background: red; }
+      50% { background: transparent; color: #b40000; }
+    }
+    .table-number { position: absolute; left: 10px; font-size: 16px; }
+    .ready-text { font-size: 16px; }
+    .eat-in {
+      position: absolute; top: 6px; right: 8px;
+      background: gold; color: #000; padding: 2px 6px;
+      font-size: 12px; border-radius: 3px;
+    }
+    .current-time {
+      position: absolute; top: 29px; right: 8px;
+      font-size: 12px; color: inherit;
+    }
+    .order-body {
+      min-height: 80px;
+      padding: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      text-align: center;
+      font-size: clamp(15px, 1.6vw, 23px);
+      font-weight: bold;
+      line-height: 1.25;
+      text-transform: none;
+      overflow-wrap: anywhere;
+    }
+    @media (max-width: 700px) {
+      .columns { flex-wrap: wrap; align-content: flex-start; }
+      .column { flex: 0 0 50%; min-height: 190px; border-bottom: 1px solid #ddd; }
+      .order { margin: 7px; }
+      .order-body { font-size: 16px; }
+      .toolbar-title { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="toolbar">
+    <div class="toolbar-title">Order Screen</div>
+    <label class="level-picker" for="level-select">
+      Level
+      <select id="level-select" aria-label="Select training level">
+        <option value="1">1. Drinks</option>
+        <option value="2">2. Drinks and Plates</option>
+      </select>
+    </label>
+  </header>
+
+  <main class="columns" aria-label="Table orders">
+    <section class="column" id="col-0" aria-label="Table 1"></section>
+    <section class="column" id="col-1" aria-label="Table 2"></section>
+    <section class="column" id="col-2" aria-label="Table 3"></section>
+    <section class="column" id="col-3" aria-label="Table 4"></section>
+  </main>
+
+  <script>
+    'use strict';
+
+    const drinksList = [
+      'Jug tap water 3 glasses',
+      '4 glasses water',
+      '3 glasses water',
+      '2 glasses water',
+      '1 glass water',
+      '1 bottomless glass',
+      '2 bottomless glasses',
+      '3 bottomless glasses',
+      '4 bottomless glasses',
+      'Jug tap water 2 glasses',
+      'Jug water 4 glasses'
+    ];
+
+    const MAX_TABLES = 4;
+    const NEW_TABLE_INTERVAL = 20000;
+    const NEXT_STAGE_MIN_DELAY = 6000;
+    const NEXT_STAGE_MAX_DELAY = 12000;
+    const tables = Array.from({ length: MAX_TABLES }, () => ({
+      started: false,
+      stage: 'drinks',
+      card: null,
+      nextOrderAt: 0
+    }));
+    const levelSelect = document.getElementById('level-select');
+    let level = 1;
+
+    function randomDrink() {
+      return drinksList[Math.floor(Math.random() * drinksList.length)];
+    }
+
+    function orderDescription(stage) {
+      if (stage === 'plates') {
+        const quantity = Math.random() < 0.5 ? 2 : 3;
+        return `${quantity} Plates`;
+      }
+      if (stage === 'clean') return 'Clear and Clean';
+      return randomDrink();
+    }
+
+    function currentClockTime() {
+      const now = new Date();
+      return [now.getHours(), now.getMinutes(), now.getSeconds()]
+        .map(part => String(part).padStart(2, '0')).join(':');
+    }
+
+    function showOrder(tableIndex) {
+      const table = tables[tableIndex];
+      if (table.card) return;
+      table.started = true;
+      table.nextOrderAt = 0;
+
+      const card = document.createElement('div');
+      card.className = 'order';
+      card.dataset.startTime = String(Date.now());
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      const description = orderDescription(table.stage);
+      card.setAttribute('aria-label', `Table ${tableIndex + 1}. ${description}. Select when completed.`);
+      card.innerHTML = `
+        <div class="status-band green">
+          <div class="table-number">${tableIndex + 1}</div>
+          <div class="ready-text">READY</div>
+          <div class="eat-in">Eat In</div>
+          <div class="current-time">${currentClockTime()}</div>
+        </div>
+        <div class="order-body"></div>
+      `;
+      card.querySelector('.order-body').textContent = description;
+      card.addEventListener('click', () => completeOrder(tableIndex));
+      card.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          completeOrder(tableIndex);
+        }
+      });
+      document.getElementById(`col-${tableIndex}`).appendChild(card);
+      table.card = card;
+    }
+
+    function completeOrder(tableIndex) {
+      const table = tables[tableIndex];
+      if (!table.card) return;
+      table.card.remove();
+      table.card = null;
+
+      if (level === 1) {
+        table.stage = 'drinks';
+      } else if (table.stage === 'drinks') {
+        table.stage = 'plates';
+      } else if (table.stage === 'plates') {
+        table.stage = 'clean';
+      } else {
+        table.stage = 'drinks';
+      }
+
+      // Each table progresses independently. A completed order is followed
+      // by its next stage after a short gap, even when other tables are busy.
+      const delay = NEXT_STAGE_MIN_DELAY +
+        Math.random() * (NEXT_STAGE_MAX_DELAY - NEXT_STAGE_MIN_DELAY);
+      table.nextOrderAt = Date.now() + delay;
+    }
+
+    function startNextTable() {
+      const index = tables.findIndex(table => !table.started);
+      if (index >= 0) showOrder(index);
+    }
+
+    function checkNextStages() {
+      const now = Date.now();
+      tables.forEach((table, index) => {
+        if (table.started && !table.card && table.nextOrderAt && now >= table.nextOrderAt) {
+          showOrder(index);
+        }
+      });
+    }
+
+    function updateStatuses() {
+      const now = Date.now();
+      tables.forEach(table => {
+        if (!table.card) return;
+        const band = table.card.querySelector('.status-band');
+        const elapsed = (now - Number(table.card.dataset.startTime)) / 1000;
+        band.classList.remove('green', 'orange', 'red', 'flashing');
+        if (elapsed > 90) band.classList.add('flashing');
+        else if (elapsed > 60) band.classList.add('red');
+        else if (elapsed > 30) band.classList.add('orange');
+        else band.classList.add('green');
+      });
+    }
+
+    function updateClocks() {
+      const time = currentClockTime();
+      document.querySelectorAll('.current-time').forEach(element => {
+        element.textContent = time;
+      });
+    }
+
+    levelSelect.addEventListener('change', () => {
+      level = Number(levelSelect.value);
+      // Start the newly selected level afresh, without mixing stages.
+      tables.forEach(table => {
+        if (table.card) table.card.remove();
+        table.started = false;
+        table.stage = 'drinks';
+        table.card = null;
+        table.nextOrderAt = 0;
+      });
+      startNextTable();
+    });
+
+    startNextTable();
+    updateClocks();
+    updateStatuses();
+    setInterval(startNextTable, NEW_TABLE_INTERVAL);
+    setInterval(checkNextStages, 1000);
+    setInterval(updateStatuses, 1000);
+    setInterval(updateClocks, 1000);
+  </script>
+</body>
+</html>
